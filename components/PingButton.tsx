@@ -18,8 +18,8 @@ export function PingButton({
     isSuccess,
   } = useWriteContract();
 
-  const lensTestnetId = chains.testnet.id;
-  const isCorrectNetwork = activeChainId === lensTestnetId;
+  const lensMainnetId = chains.mainnet.id;
+  const isCorrectNetwork = activeChainId === lensMainnetId;
 
   useEffect(() => {
     if (isSuccess && txHash) {
@@ -38,7 +38,7 @@ export function PingButton({
           className="mt-4"
           onClick={() => {
             if (switchChain) {
-              switchChain({ chainId: lensTestnetId });
+              switchChain({ chainId: lensMainnetId });
             } else {
               alert("Network switching is not supported in your wallet.");
             }
@@ -66,7 +66,7 @@ export function PingButton({
       {txHash && (
         <div className="mt-4">
           <a
-            href={chains.testnet.blockExplorers!.default.url + "/tx/" + txHash}
+            href={chains.mainnet.blockExplorers!.default.url + "/tx/" + txHash}
           >
             View Transaction
           </a>

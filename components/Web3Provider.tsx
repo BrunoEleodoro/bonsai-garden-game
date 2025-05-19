@@ -6,16 +6,16 @@ import { chains } from "@lens-chain/sdk/viem";
 
 const config = createConfig(
   getDefaultConfig({
-    chains: [chains.testnet],
+    chains: [chains.mainnet],
     transports: {
-      [chains.testnet.id]: http(`https://rpc.testnet.lens.dev`),
+      [chains.mainnet.id]: http(`https://rpc.mainnet.lens.dev`),
     },
 
     // Required API Keys
     walletConnectProjectId: process.env.NEXT_PUBLIC_WALLETCONNECT_ID || "",
 
     // Required App Info
-    appName: "Lens Testnet Demo",
+    appName: "Lens Mainnet Demo",
   })
 );
 

@@ -12,8 +12,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Lens Testnet Demo",
-  description: "Lens Testnet Ping Contract Demo",
+  title: "Lens Mainnet Demo",
+  description: "Lens Mainnet Ping Contract Demo",
 };
 
 export default function RootLayout({
