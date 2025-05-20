@@ -76,13 +76,13 @@ const bonsaiGarden = {
   ): Promise<TemplateHandlerResponse | undefined> => {
     const refresh = !!media?.templateData;
     elizaLogger.info(`Running template (refresh: ${refresh}):`, TemplateName.BONSAI_GARDEN);
+    const templateData = _templateData;
+    // if (!media?.templateData) {
+    //   elizaLogger.error("Missing template data");
+    //   return;
+    // }
 
-    if (!media?.templateData) {
-      elizaLogger.error("Missing template data");
-      return;
-    }
-
-    const templateData = media.templateData as BonsaiGardenTemplateData;
+    // const templateData = media.templateData as BonsaiGardenTemplateData;
 
     const totalUsage: TemplateUsage = {
       promptTokens: 0,
@@ -92,6 +92,77 @@ const bonsaiGarden = {
     };
 
     try {
+      // If this is the first interaction (no media, or media with no postId/uri), generate an image preview from templateData
+      const isFirstInteraction =
+        !media ||
+        !media.postId ||
+        !media.uri ||
+        !media.templateData ||
+        // Accept both cases: templateData is BonsaiGardenTemplateData or is wrapped in {category, templateName, templateData}
+        (
+          typeof media.templateData === "object" &&
+          "personality" in media.templateData &&
+          "action" in media.templateData &&
+          !media.versionCount // versionCount is 0 or undefined for first
+        );
+
+      // If _templateData is provided (preview), or first interaction, generate preview image
+      if (isFirstInteraction || _templateData) {
+        // Use templateData from _templateData or from media.templateData
+        const td: BonsaiGardenTemplateData =
+          (_templateData as BonsaiGardenTemplateData) ||
+          (media?.templateData && "templateData" in media.templateData
+            ? (media.templateData as any).templateData
+            : (media?.templateData as BonsaiGardenTemplateData));
+
+        const personality = td?.personality?.trim() || "Brave, clever, and kind";
+        const action = td?.action?.trim() || "standing heroically";
+
+        let imagePrompt = composeContext({
+          // @ts-expect-error we don't need the full State object here to produce the context
+          state: {
+            personality,
+            action,
+          },
+          template: nextHeroImageTemplate,
+        });
+
+        elizaLogger.info("bonsaiGarden:: generating initial hero image preview", { personality, action, imagePrompt });
+
+        let imageResponse;
+        let attempts = 0;
+        const MAX_ATTEMPTS = 2;
+        while (attempts < MAX_ATTEMPTS) {
+          imageResponse = await generateImage(
+            {
+              prompt: imagePrompt,
+              width: 1024,
+              height: 1024,
+              imageModelProvider: ModelProviderName.VENICE,
+              modelId: td?.modelId || DEFAULT_HERO_IMAGE_MODEL_ID,
+              stylePreset: td?.stylePreset,
+              // No inpaint for first preview
+            },
+            runtime
+          );
+          totalUsage.imagesCreated += 1;
+          if (imageResponse.success) break;
+          attempts++;
+        }
+
+        if (!imageResponse.success) {
+          throw new Error("Failed to generate hero image preview after multiple attempts");
+        }
+
+        // Return preview (for preview step, don't persist to storage)
+        return {
+          preview: imageResponse.data?.[0] || imageResponse.data,
+          updatedTemplateData: td,
+          totalUsage,
+        };
+      }
+
+      // Otherwise, this is an update (post exists, has uri, etc)
       let comments: Post[]; // latest comments to evaluate for the next decision
 
       // if the post not stale, check if we've passed the min comment threshold
@@ -208,9 +279,9 @@ const bonsaiGarden = {
             prompt: imagePrompt,
             width: 1024,
             height: 1024,
-            imageModelProvider: ModelProviderName.VENICE,
-            modelId: templateData.modelId || DEFAULT_HERO_IMAGE_MODEL_ID,
-            stylePreset: templateData.stylePreset,
+            imageModelProvider: ModelProviderName.OPENROUTER,
+            modelId: templateData?.modelId || DEFAULT_HERO_IMAGE_MODEL_ID,
+            stylePreset: templateData?.stylePreset,
             inpaint: firstAttempt ? {
               strength: 50,
               source_image_base64: await fetch(imageUrl)
@@ -286,7 +357,7 @@ const bonsaiGarden = {
     }
   },
   clientMetadata: {
-    protocolFeeRecipient: BONSAI_PROTOCOL_FEE_RECIPIENT,
+    protocolFeeRecipient: "0xDd6d37E29294A985E49fF301Acc80877fC24997F",
     category: TemplateCategory.BONSAI_GARDEN,
     name: TemplateName.BONSAI_GARDEN,
     displayName: "Bonsai Garden RPG Hero",

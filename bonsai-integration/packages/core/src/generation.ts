@@ -1894,8 +1894,14 @@ export const generateImage = async (
     data?: string[];
     error?: any;
 }> => {
-    const imageModelProvider = data.imageModelProvider || runtime.imageModelProvider;
+    elizaLogger.info("data", data);
+
+    // Always use VENICE as the provider
+    const imageModelProvider = ModelProviderName.VENICE;
+    elizaLogger.info("imageModelProvider", imageModelProvider);
+
     const modelSettings = getImageModelSettings(imageModelProvider);
+    elizaLogger.info("modelSettings", modelSettings);
     if (!modelSettings) {
         elizaLogger.warn("No model settings found for the image model provider.");
         return { success: false, error: "No model settings available" };
@@ -1905,382 +1911,91 @@ export const generateImage = async (
         imageModelProvider,
         modelId: data.modelId,
         stylePreset: data.stylePreset,
-        inpaint: !!data.inpaint
+        // inpaint: !!data.inpaint
     });
 
-    const apiKey =
-        ((!imageModelProvider || imageModelProvider === runtime.imageModelProvider)) && runtime.imageModelProvider === runtime.modelProvider
-            ? runtime.token
-            : (() => {
-                  // First try to match the specific provider
-                  switch (imageModelProvider) {
-                      case ModelProviderName.HEURIST:
-                          return runtime.getSetting("HEURIST_API_KEY");
-                      case ModelProviderName.TOGETHER:
-                          return runtime.getSetting("TOGETHER_API_KEY");
-                      case ModelProviderName.FAL:
-                          return runtime.getSetting("FAL_API_KEY");
-                      case ModelProviderName.OPENAI:
-                          return runtime.getSetting("OPENAI_API_KEY");
-                      case ModelProviderName.VENICE:
-                          return runtime.getSetting("VENICE_API_KEY");
-                      case ModelProviderName.LIVEPEER:
-                          return runtime.getSetting("LIVEPEER_GATEWAY_URL");
-                      case ModelProviderName.SECRETAI:
-                          return runtime.getSetting("SECRET_AI_API_KEY");
-                      case ModelProviderName.NEARAI:
-                          try {
-                              // Read auth config from ~/.nearai/config.json if it exists
-                              const config = JSON.parse(
-                                  fs.readFileSync(
-                                      path.join(
-                                          os.homedir(),
-                                          ".nearai/config.json"
-                                      ),
-                                      "utf8"
-                                  )
-                              );
-                              return JSON.stringify(config?.auth);
-                          } catch (e) {
-                              elizaLogger.warn(
-                                  `Error loading NEAR AI config. The environment variable NEARAI_API_KEY will be used. ${e}`
-                              );
-                          }
-                          return runtime.getSetting("NEARAI_API_KEY");
-                      default:
-                          // If no specific match, try the fallback chain
-                          return (
-                              runtime.getSetting("HEURIST_API_KEY") ??
-                              runtime.getSetting("NINETEEN_AI_API_KEY") ??
-                              runtime.getSetting("TOGETHER_API_KEY") ??
-                              runtime.getSetting("FAL_API_KEY") ??
-                              runtime.getSetting("OPENAI_API_KEY") ??
-                              runtime.getSetting("VENICE_API_KEY") ??
-                              runtime.getSetting("LIVEPEER_GATEWAY_URL")
-                          );
-                  }
-              })();
+    // Always get the VENICE API key
+    let apiKey: string | undefined;
     try {
-        if (imageModelProvider === ModelProviderName.HEURIST) {
-            const response = await fetch(
-                "http://sequencer.heurist.xyz/submit_job",
-                {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${apiKey}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        job_id: data.jobId || crypto.randomUUID(),
-                        model_input: {
-                            SD: {
-                                prompt: data.prompt,
-                                neg_prompt: data.negativePrompt,
-                                num_iterations: data.numIterations || 20,
-                                width: data.width || 512,
-                                height: data.height || 512,
-                                guidance_scale: data.guidanceScale || 3,
-                                seed: data.seed || -1,
-                            },
-                        },
-                        model_id: model,
-                        deadline: 60,
-                        priority: 1,
-                    }),
-                }
-            );
-
-            if (!response.ok) {
-                throw new Error(
-                    `Heurist image generation failed: ${response.statusText}`
-                );
-            }
-
-            const imageURL = await response.json();
-            return { success: true, data: [imageURL] };
-        } else if (
-            imageModelProvider === ModelProviderName.TOGETHER ||
-            // for backwards compat
-            imageModelProvider === ModelProviderName.LLAMACLOUD
-        ) {
-            const together = new Together({ apiKey: apiKey as string });
-            const response = await together.images.create({
-                model: model,
-                prompt: data.prompt,
-                width: data.width,
-                height: data.height,
-                steps: modelSettings?.steps ?? 4,
-                n: data.count,
-            });
-
-            // Add type assertion to handle the response properly
-            const togetherResponse =
-                response as unknown as TogetherAIImageResponse;
-
-            if (
-                !togetherResponse.data ||
-                !Array.isArray(togetherResponse.data)
-            ) {
-                throw new Error("Invalid response format from Together AI");
-            }
-
-            // Rest of the code remains the same...
-            const base64s = await Promise.all(
-                togetherResponse.data.map(async (image) => {
-                    if (!image.url) {
-                        elizaLogger.error("Missing URL in image data:", image);
-                        throw new Error("Missing URL in Together AI response");
-                    }
-
-                    // Fetch the image from the URL
-                    const imageResponse = await fetch(image.url);
-                    if (!imageResponse.ok) {
-                        throw new Error(
-                            `Failed to fetch image: ${imageResponse.statusText}`
-                        );
-                    }
-
-                    // Convert to blob and then to base64
-                    const blob = await imageResponse.blob();
-                    const arrayBuffer = await blob.arrayBuffer();
-                    const base64 = Buffer.from(arrayBuffer).toString("base64");
-
-                    // Return with proper MIME type
-                    return `data:image/jpeg;base64,${base64}`;
-                })
-            );
-
-            if (base64s.length === 0) {
-                throw new Error("No images generated by Together AI");
-            }
-
-            elizaLogger.debug(`Generated ${base64s.length} images`);
-            return { success: true, data: base64s };
-        } else if (imageModelProvider === ModelProviderName.FAL) {
-            fal.config({
-                credentials: apiKey as string,
-            });
-
-            // Prepare the input parameters according to their schema
-            const input = {
-                prompt: data.prompt,
-                image_size: "square" as const,
-                num_inference_steps: modelSettings?.steps ?? 50,
-                guidance_scale: data.guidanceScale || 3.5,
-                num_images: data.count,
-                enable_safety_checker:
-                    runtime.getSetting("FAL_AI_ENABLE_SAFETY_CHECKER") ===
-                    "true",
-                safety_tolerance: Number(
-                    runtime.getSetting("FAL_AI_SAFETY_TOLERANCE") || "2"
-                ),
-                output_format: "png" as const,
-                seed: data.seed ?? 6252023,
-                ...(runtime.getSetting("FAL_AI_LORA_PATH")
-                    ? {
-                          loras: [
-                              {
-                                  path: runtime.getSetting("FAL_AI_LORA_PATH"),
-                                  scale: 1,
-                              },
-                          ],
-                      }
-                    : {}),
-            };
-
-            // Subscribe to the model
-            const result = await fal.subscribe(model, {
-                input,
-                logs: true,
-                onQueueUpdate: (update) => {
-                    if (update.status === "IN_PROGRESS") {
-                        elizaLogger.info(update.logs.map((log) => log.message));
-                    }
-                },
-            });
-            // Convert the returned image URLs to base64 to match existing functionality
-            const base64Promises = result.data.images.map(async (image) => {
-                const response = await fetch(image.url);
-                const blob = await response.blob();
-                const buffer = await blob.arrayBuffer();
-                const base64 = Buffer.from(buffer).toString("base64");
-                return `data:${image.content_type};base64,${base64}`;
-            });
-
-            const base64s = await Promise.all(base64Promises);
-            return { success: true, data: base64s };
-        } else if (imageModelProvider === ModelProviderName.VENICE) {
-            const response = await fetch(
-                "https://api.venice.ai/api/v1/image/generate",
-                {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${apiKey}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        model: data.modelId || model,
-                        prompt: data.prompt,
-                        cfg_scale: data.guidanceScale,
-                        negative_prompt: data.negativePrompt,
-                        width: data.width,
-                        height: data.height,
-                        steps: data.numIterations,
-                        safe_mode: data.safeMode,
-                        seed: data.seed,
-                        style_preset: data.stylePreset,
-                        hide_watermark: data.hideWatermark,
-                        inpaint: data.inpaint,
-                    }),
-                }
-            );
-
-            const result = await response.json();
-
-            if (!result.images || !Array.isArray(result.images)) {
-                throw new Error("Invalid response format from Venice AI");
-            }
-
-            const base64s = result.images.map((base64String) => {
-                if (!base64String) {
-                    throw new Error(
-                        "Empty base64 string in Venice AI response"
-                    );
-                }
-                return `data:image/png;base64,${base64String}`;
-            });
-
-            return { success: true, data: base64s };
-        } else if (
-            imageModelProvider === ModelProviderName.NINETEEN_AI
-        ) {
-            const response = await fetch(
-                "https://api.nineteen.ai/v1/text-to-image",
-                {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Bearer ${apiKey}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        model: model,
-                        prompt: data.prompt,
-                        negative_prompt: data.negativePrompt,
-                        width: data.width,
-                        height: data.height,
-                        steps: data.numIterations,
-                        cfg_scale: data.guidanceScale || 3,
-                    }),
-                }
-            );
-
-            const result = await response.json();
-
-            if (!result.images || !Array.isArray(result.images)) {
-                throw new Error("Invalid response format from Nineteen AI");
-            }
-
-            const base64s = result.images.map((base64String) => {
-                if (!base64String) {
-                    throw new Error(
-                        "Empty base64 string in Nineteen AI response"
-                    );
-                }
-                return `data:image/png;base64,${base64String}`;
-            });
-
-            return { success: true, data: base64s };
-        } else if (imageModelProvider === ModelProviderName.LIVEPEER) {
-            if (!apiKey) {
-                throw new Error("Livepeer Gateway is not defined");
-            }
-            try {
-                const baseUrl = new URL(apiKey);
-                if (!baseUrl.protocol.startsWith("http")) {
-                    throw new Error("Invalid Livepeer Gateway URL protocol");
-                }
-
-                const response = await fetch(
-                    `${baseUrl.toString()}text-to-image`,
-                    {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            Authorization: "Bearer eliza-app-img",
-                        },
-                        body: JSON.stringify({
-                            model_id:
-                                data.modelId || "ByteDance/SDXL-Lightning",
-                            prompt: data.prompt,
-                            width: data.width || 1024,
-                            height: data.height || 1024,
-                        }),
-                    }
-                );
-                const result = await response.json();
-                if (!result.images?.length) {
-                    throw new Error("No images generated");
-                }
-                const base64Images = await Promise.all(
-                    result.images.map(async (image) => {
-                        console.log("imageUrl console log", image.url);
-                        let imageUrl;
-                        if (image.url.includes("http")) {
-                            imageUrl = image.url;
-                        } else {
-                            imageUrl = `${apiKey}${image.url}`;
-                        }
-                        const imageResponse = await fetch(imageUrl);
-                        if (!imageResponse.ok) {
-                            throw new Error(
-                                `Failed to fetch image: ${imageResponse.statusText}`
-                            );
-                        }
-                        const blob = await imageResponse.blob();
-                        const arrayBuffer = await blob.arrayBuffer();
-                        const base64 =
-                            Buffer.from(arrayBuffer).toString("base64");
-                        return `data:image/jpeg;base64,${base64}`;
-                    })
-                );
-                return {
-                    success: true,
-                    data: base64Images,
-                };
-            } catch (error) {
-                console.error(error);
-                return { success: false, error: error };
-            }
-        } else {
-            let targetSize = `${data.width}x${data.height}`;
-            if (
-                targetSize !== "1024x1024" &&
-                targetSize !== "1792x1024" &&
-                targetSize !== "1024x1792"
-            ) {
-                targetSize = "1024x1024";
-            }
-            const openaiApiKey = runtime.getSetting("OPENAI_API_KEY") as string;
-            if (!openaiApiKey) {
-                throw new Error("OPENAI_API_KEY is not set");
-            }
-            const openai = new OpenAI({
-                apiKey: openaiApiKey as string,
-            });
-            const response = await openai.images.generate({
-                model,
-                prompt: data.prompt,
-                size: targetSize as "1024x1024" | "1792x1024" | "1024x1792",
-                n: data.count,
-                response_format: "b64_json",
-            });
-            const base64s = response.data.map(
-                (image) => `data:image/png;base64,${image.b64_json}`
-            );
-            return { success: true, data: base64s };
+        apiKey =  process.env.VENICE_API_KEY;
+        elizaLogger.info("apikey", apiKey ? "[REDACTED]" : "undefined");
+        if (!apiKey) {
+            elizaLogger.error("VENICE_API_KEY is missing from runtime settings");
+            return { success: false, error: "VENICE_API_KEY is missing" };
         }
+    } catch (e) {
+        elizaLogger.error("Error retrieving VENICE_API_KEY from runtime", e);
+        return { success: false, error: "Failed to retrieve VENICE_API_KEY" };
+    }
+
+    // Defensive: check fetch exists
+    if (typeof fetch !== "function") {
+        elizaLogger.error("Global fetch is not available");
+        return { success: false, error: "Global fetch is not available" };
+    }
+
+    let requestBody: any;
+    try {
+        requestBody = {
+            model: data.modelId || model,
+            prompt: data.prompt,
+            cfg_scale: data.guidanceScale,
+            negative_prompt: data.negativePrompt,
+            width: data.width,
+            height: data.height,
+            steps: data.numIterations,
+            safe_mode: data.safeMode,
+            seed: data.seed,
+            style_preset: data.stylePreset,
+            hide_watermark: data.hideWatermark,
+            inpaint: data.inpaint,
+        };
+        elizaLogger.info("Request body for Venice:", requestBody);
+    } catch (e) {
+        elizaLogger.error("Failed to construct request body for Venice", e);
+        return { success: false, error: "Failed to construct request body" };
+    }
+
+    try {
+        const response = await fetch(
+            "https://api.venice.ai/api/v1/image/generate",
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(requestBody),
+            }
+        );
+        elizaLogger.info("Venice fetch response status:", response.status);
+
+        let result: any;
+        try {
+            result = await response.json();
+        } catch (jsonErr) {
+            elizaLogger.error("Failed to parse Venice response as JSON", jsonErr);
+            return { success: false, error: "Failed to parse Venice response as JSON" };
+        }
+        elizaLogger.info("Venice result", result);
+
+        if (!result.images || !Array.isArray(result.images)) {
+            elizaLogger.error("Invalid response format from Venice AI", result);
+            return { success: false, error: "Invalid response format from Venice AI" };
+        }
+        elizaLogger.info("Venice result.images", result.images);
+
+        const base64s = result.images.map((base64String: string) => {
+            if (!base64String) {
+                elizaLogger.error("Empty base64 string in Venice AI response", result);
+                throw new Error("Empty base64 string in Venice AI response");
+            }
+            return `data:image/png;base64,${base64String}`;
+        });
+        // elizaLogger.info("Venice base64s", base64s);
+        return { success: true, data: base64s };
     } catch (error) {
-        console.error(error);
+        elizaLogger.error("Venice image generation failed", error);
         return { success: false, error: error };
     }
 };

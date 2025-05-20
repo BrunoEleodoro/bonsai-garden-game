@@ -166,6 +166,8 @@ class BonsaiClient {
           return;
         }
 
+        elizaLogger.info(`templateData: ${templateData}`);
+
         // generate the preview and cache it for the create step
         const response = await template.handler(runtime as IAgentRuntime, undefined, templateData);
         const media = formatSmartMedia(

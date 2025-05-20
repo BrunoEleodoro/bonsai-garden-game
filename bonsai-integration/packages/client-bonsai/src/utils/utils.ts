@@ -15,6 +15,8 @@ export const bToHexString = (id: bigint) => {
 };
 
 export const isMediaStale = (media: SmartMedia): boolean => {
+    if (!media) return false;
+    if (!media.updatedAt) return false;
     const currentTime = Math.floor(new Date().getTime() / 1000);
     return currentTime - media.updatedAt > media.maxStaleTime;
 };
