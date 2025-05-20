@@ -30,10 +30,7 @@ export default class TownMap extends RpgMap {
     });
 
     console.log("Map loaded");
-    // Fetch RPG heroes from your API
     const apiEndpoint = "https://content-luck-production.up.railway.app/rpg-heroes";
-    const response = await fetch(apiEndpoint);
-    const heroesData = await response.json();
 
     // Helper to get a message from OpenRouter (using OpenAI lib)
     async function getOpenRouterMessage(personality: string, action: string) {
@@ -60,19 +57,67 @@ export default class TownMap extends RpgMap {
     }
 
     // Store references to events for batch updates
-    const npcEvents = heroesData.slice(0, 4).map((hero) => {
-      const eventObj = this.createDynamicEvent({
-        x: Math.floor(Math.random() * 350),
-        y: Math.floor(Math.random() * 350),
-        event: Villager2Event,
+    let npcEvents: Array<{ event: any, hero: any }> = [];
+
+    // Helper to check if an NPC with the same unique id (or personality+action) already exists
+    function isNpcAlreadyPresent(hero: any) {
+      // You can use a unique id if available, or fallback to personality+action
+      return npcEvents.some(({ hero: existingHero }) => {
+        if (hero.id && existingHero.id) {
+          return hero.id === existingHero.id;
+        }
+        // fallback: compare personality+action
+        return (
+          hero.templateData?.personality === existingHero.templateData?.personality &&
+          hero.templateData?.action === existingHero.templateData?.action
+        );
       });
-      const event = Object.values(eventObj)[0];
-      event.setComponentsTop([
-        Components.text(hero.templateData?.personality || "Unknown Hero"),
-      ]);
-      event.setGraphic("hero");
-      return { event, hero };
-    });
+    }
+
+    // Helper to create new NPCs, avoiding duplicates
+    const createNPCs = (heroesData: any[]) => {
+      // Remove old NPCs from the map
+      for (const { event } of npcEvents) {
+        if (event && typeof event.destroy === "function") {
+          event.destroy();
+        }
+      }
+      npcEvents = [];
+
+      // Track which NPCs have already been added (by id or personality+action)
+      const addedNpcKeys = new Set();
+
+      for (const hero of heroesData) {
+        // Build a unique key for the hero (prefer id, else personality+action)
+        let key = hero.id
+          ? `id:${hero.id}`
+          : `p:${hero.templateData?.personality || ""}|a:${hero.templateData?.action || ""}`;
+        if (addedNpcKeys.has(key)) {
+          continue; // skip duplicate
+        }
+        addedNpcKeys.add(key);
+
+        // Check if already present in the game (shouldn't be, since we destroy all above, but for safety)
+        if (isNpcAlreadyPresent(hero)) {
+          continue;
+        }
+
+        // Limit to 4 NPCs
+        if (npcEvents.length >= 4) break;
+
+        const eventObj = this.createDynamicEvent({
+          x: Math.floor(Math.random() * 350),
+          y: Math.floor(Math.random() * 350),
+          event: Villager2Event,
+        });
+        const event = Object.values(eventObj)[0];
+        event.setComponentsTop([
+          Components.text(hero.templateData?.personality || "Unknown Hero"),
+        ]);
+        event.setGraphic("hero");
+        npcEvents.push({ event, hero });
+      }
+    };
 
     // Helper to update all NPCs in a batch, waiting for all to finish before next batch
     const updateAllPhrases = async () => {
@@ -95,16 +140,50 @@ export default class TownMap extends RpgMap {
       );
     };
 
+    // Fetch and create initial NPCs
+    const fetchAndCreateNPCs = async () => {
+      try {
+        const response = await fetch(apiEndpoint);
+        const heroesData = await response.json();
+
+        // Filter out heroes that are already present (by id or personality+action)
+        const uniqueHeroes = [];
+        const seenKeys = new Set();
+        for (const hero of heroesData) {
+          let key = hero.id
+            ? `id:${hero.id}`
+            : `p:${hero.templateData?.personality || ""}|a:${hero.templateData?.action || ""}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            uniqueHeroes.push(hero);
+          }
+        }
+
+        createNPCs(uniqueHeroes);
+        await updateAllPhrases();
+      } catch (e) {
+        console.error("Failed to fetch or create NPCs:", e);
+      }
+    };
+
     // Start the batch update loop
     const BATCH_INTERVAL = 35000; // 35 seconds, slightly longer than before to allow all requests to finish
+    const NPC_REFRESH_INTERVAL = 120000; // 2 minutes: how often to fetch new NPCs
 
-    // Initial phrase update for all NPCs
-    updateAllPhrases();
+    // Initial fetch and create
+    await fetchAndCreateNPCs();
 
     // Batch loop: only start next batch after all NPCs have finished updating
+    let lastNpcRefresh = Date.now();
     const batchLoop = async () => {
       while (true) {
-        await updateAllPhrases();
+        // If it's time to refresh NPCs, fetch new ones and update
+        if (Date.now() - lastNpcRefresh > NPC_REFRESH_INTERVAL) {
+          await fetchAndCreateNPCs();
+          lastNpcRefresh = Date.now();
+        } else {
+          await updateAllPhrases();
+        }
         await new Promise((resolve) => setTimeout(resolve, BATCH_INTERVAL));
       }
     };
