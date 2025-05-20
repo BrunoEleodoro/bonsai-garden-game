@@ -28,7 +28,15 @@ app.get('/rpg-heroes', async (req, res) => {
   try {
     const db = await getDb();
     const collection = db.collection(COLLECTION_NAME);
-    const heroes = await collection.find({}).toArray();
+    let heroes = await collection.find({}).toArray();
+    // Remove imageResponse property from each hero object
+    heroes = heroes.map(hero => {
+      if ('imageResponse' in hero) {
+        const { imageResponse, ...rest } = hero;
+        return rest;
+      }
+      return hero;
+    });
     res.json(heroes);
   } catch (err) {
     console.error(err);
