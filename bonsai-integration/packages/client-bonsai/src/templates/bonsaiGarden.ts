@@ -412,7 +412,7 @@ const bonsaiGarden = {
     name: TemplateName.BONSAI_GARDEN,
     displayName: "Bonsai Garden RPG Hero",
     description: "Define your RPG hero's personality and actions. Collect the post, buy tokens, and interact (replies, upvotes) to evolve the hero's image.",
-    image: "https://link.storjshare.io/raw/jwq56rwpuhhle4k7tjbxyfd4l37q/bonsai/heroPresent.png",
+    image: "https://ik.imagekit.io/lens/tr:w-1000/0788c52ed5989e7bb6df370d75c5a17e9241a8831cc88f3fdc8a07cc2bc5bebd_Ei6TG-hqM.png",
     options: {
       allowPreview: true,
       allowPreviousToken: true,

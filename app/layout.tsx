@@ -12,8 +12,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Lens Mainnet Demo",
-  description: "Lens Mainnet Ping Contract Demo",
+  title: "Bonsai Garden RPG",
+  description: "A lush, mysterious, and immersive dark green RPG garden adventure.",
 };
 
 export default function RootLayout({
@@ -22,7 +22,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
