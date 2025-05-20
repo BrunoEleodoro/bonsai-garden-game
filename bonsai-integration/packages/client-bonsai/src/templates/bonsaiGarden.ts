@@ -36,6 +36,7 @@ import { LENS_CHAIN, LENS_CHAIN_ID, storageClient } from "../services/lens/clien
 import { BONSAI_PROTOCOL_FEE_RECIPIENT } from "../utils/constants";
 import { refresh } from "@lens-protocol/client/actions";
 import { v4 as uuidv4 } from 'uuid';
+import { MongoClient } from 'mongodb';
 
 export const nextHeroImageTemplate = `
 # Instructions
@@ -56,6 +57,27 @@ type BonsaiGardenTemplateData = {
 
 const DEFAULT_HERO_IMAGE_MODEL_ID = "venice-sd35"; // most creative
 const DEFAULT_MIN_ENGAGEMENT_UPDATE_THREHOLD = 1; // at least 1 upvote/comment before updating
+
+const MONGODB_URI = process.env.MONGODB_INTEGRATION;
+const DB_NAME = 'bonsai_garden';
+const COLLECTION_NAME = 'rpg_heroes';
+
+async function upsertRpgHeroDocument(document: any) {
+  if (!MONGODB_URI) return;
+  const client = new MongoClient(MONGODB_URI);
+  try {
+    await client.connect();
+    const db = client.db(DB_NAME);
+    const collection = db.collection(COLLECTION_NAME);
+    // Use postId as unique identifier if available, otherwise fallback to a generated id
+    const filter = document.postId ? { postId: document.postId } : { _id: document._id };
+    await collection.updateOne(filter, { $set: document }, { upsert: true });
+  } catch (err) {
+    console.error('Failed to upsert RPG hero document:', err);
+  } finally {
+    await client.close();
+  }
+}
 
 /**
  * Handles the generation and updating of a "Bonsai Garden RPG Hero" type post.
@@ -101,6 +123,7 @@ const bonsaiGarden = {
         // Accept both cases: templateData is BonsaiGardenTemplateData or is wrapped in {category, templateName, templateData}
         (
           typeof media.templateData === "object" &&
+          media.templateData !== null &&
           "personality" in media.templateData &&
           "action" in media.templateData &&
           !media.versionCount // versionCount is 0 or undefined for first
@@ -111,7 +134,7 @@ const bonsaiGarden = {
         // Use templateData from _templateData or from media.templateData
         const td: BonsaiGardenTemplateData =
           (_templateData as BonsaiGardenTemplateData) ||
-          (media?.templateData && "templateData" in media.templateData
+          (media?.templateData && typeof media.templateData === "object" && media.templateData !== null && "templateData" in media.templateData
             ? (media.templateData as any).templateData
             : (media?.templateData as BonsaiGardenTemplateData));
 
@@ -155,6 +178,14 @@ const bonsaiGarden = {
         }
 
         // Return preview (for preview step, don't persist to storage)
+        const doc = {
+          type: 'preview',
+          createdAt: new Date(),
+          templateData: td,
+          imagePrompt,
+          imageResponse: imageResponse.data?.[0] || imageResponse.data,
+        };
+        upsertRpgHeroDocument(doc);
         return {
           preview: imageResponse.data?.[0] || imageResponse.data,
           updatedTemplateData: td,
@@ -350,6 +381,25 @@ const bonsaiGarden = {
         throw new Error("failed");
       }
 
+      // After successful update (post exists, has uri, etc)
+      // ... existing code ...
+      // After all storage and image logic, upsert to MongoDB
+      const doc = {
+        type: 'update',
+        updatedAt: new Date(),
+        templateData: templateData || media?.templateData,
+        media,
+        postId: media?.postId,
+        uri: media?.uri,
+        imageUri,
+        imageUrl,
+        comments: commentsWeighted,
+        storjResult,
+        persistVersionUri,
+        totalUsage,
+      };
+      upsertRpgHeroDocument(doc);
+      // ... existing code ...
       return { persistVersionUri, totalUsage, refreshMetadata: refresh }
     } catch (error) {
       console.log(error);
