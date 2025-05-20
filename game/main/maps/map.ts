@@ -30,31 +30,28 @@ export default class TownMap extends RpgMap {
     });
 
     console.log("Map loaded");
-    const users = await fetch("https://jsonplaceholder.typicode.com/users");
-    const usersData = await users.json();
-
-    const graphics = ["hero", "hero", "female", "male"];
+    // Fetch RPG heroes from your API
+    const apiEndpoint = "https://content-luck-production.up.railway.app/rpg-heroes";
+    const response = await fetch(apiEndpoint);
+    const heroesData = await response.json();
 
     // Helper to get a message from OpenRouter (using OpenAI lib)
-    async function getOpenRouterMessage() {
+    async function getOpenRouterMessage(personality: string, action: string) {
       try {
-        console.log("Fetching OpenRouter message via OpenAI lib...");
+        const prompt = `
+          You are a friendly NPC in a fantasy RPG town.\nYour personality is: ${personality}.\nYou are currently: ${action}.\nSay something short and interesting to a passing player. 30 characters max.\nOutput in JSON format: { \"message\": \"Hello, traveler!\" }`
         const chatCompletion = await openai.chat.completions.create({
           model: "meta-llama/llama-3.3-8b-instruct:free",
           messages: [
             {
               role: "user",
-              content:
-                "You are a friendly NPC in a fantasy RPG town. Say something short and interesting to a passing player. 30 characters max. output in JSON format: { \"message\": \"Hello, traveler!\" }",
+              content: prompt,
             },
           ],
         });
-
-        // Extract the message content
         const content =
           chatCompletion.choices?.[0]?.message?.content?.trim() ||
           "Hello, traveler!";
-        console.log('received message')
         return content;
       } catch (e) {
         console.error("Failed to fetch OpenRouter message:", e);
@@ -63,36 +60,35 @@ export default class TownMap extends RpgMap {
     }
 
     // Store references to events for batch updates
-    const npcEvents = usersData.slice(0, 4).map((user) => {
+    const npcEvents = heroesData.slice(0, 4).map((hero) => {
       const eventObj = this.createDynamicEvent({
         x: Math.floor(Math.random() * 350),
         y: Math.floor(Math.random() * 350),
         event: Villager2Event,
       });
       const event = Object.values(eventObj)[0];
-      event.setComponentsTop(Components.text(user.name));
-      event.setGraphic(
-        graphics[Math.floor(Math.random() * graphics.length)]
-      );
-      return { event, user };
+      event.setComponentsTop([
+        Components.text(hero.templateData?.personality || "Unknown Hero"),
+      ]);
+      event.setGraphic("hero");
+      return { event, hero };
     });
 
     // Helper to update all NPCs in a batch, waiting for all to finish before next batch
     const updateAllPhrases = async () => {
-      // For each NPC, fetch a new phrase and update
       await Promise.all(
-        npcEvents.map(async ({ event, user }) => {
-          const phrase = await getOpenRouterMessage();
+        npcEvents.map(async ({ event, hero }) => {
+          const phrase = await getOpenRouterMessage(
+            hero.templateData?.personality || "brave",
+            hero.templateData?.action || "standing heroically"
+          );
           let parsedPhrase;
           try {
             parsedPhrase = JSON.parse(phrase);
           } catch (e) {
-            // fallback if not valid JSON
             parsedPhrase = { message: phrase };
           }
-          console.log(parsedPhrase)
           event.setComponentsTop([
-            // Components.text(user.name),
             Components.text(parsedPhrase.message),
           ]);
         })
